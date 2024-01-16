@@ -2,9 +2,11 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net"
+	"strings"
 
 	cloudevents "github.com/cloudevents/sdk-go/v2"
 	"github.com/cloudevents/sdk-go/v2/binding"
@@ -18,9 +20,11 @@ import (
 	grpcprotocol "open-cluster-management.io/api/cloudevents/generic/options/grpc/protocol"
 	"open-cluster-management.io/api/cloudevents/generic/types"
 	"open-cluster-management.io/api/cloudevents/work/payload"
+	workv1 "open-cluster-management.io/api/work/v1"
 
 	"github.com/openshift-online/maestro/pkg/api"
 	"github.com/openshift-online/maestro/pkg/config"
+	"github.com/openshift-online/maestro/pkg/event"
 	"github.com/openshift-online/maestro/pkg/services"
 )
 
@@ -28,12 +32,13 @@ import (
 type GRPCServer struct {
 	pbv1.UnimplementedCloudEventServiceServer
 	grpcServer      *grpc.Server
+	eventHub        *event.EventHub
 	resourceService services.ResourceService
 	bindAddress     string
 }
 
 // NewGRPCServer creates a new GRPCServer
-func NewGRPCServer(resourceService services.ResourceService, config config.GRPCServerConfig) *GRPCServer {
+func NewGRPCServer(resourceService services.ResourceService, eventHub *event.EventHub, config config.GRPCServerConfig) *GRPCServer {
 	grpcServerOptions := make([]grpc.ServerOption, 0)
 	grpcServerOptions = append(grpcServerOptions, grpc.MaxRecvMsgSize(config.MaxReceiveMessageSize))
 	grpcServerOptions = append(grpcServerOptions, grpc.MaxSendMsgSize(config.MaxSendMessageSize))
@@ -64,6 +69,7 @@ func NewGRPCServer(resourceService services.ResourceService, config config.GRPCS
 	}
 
 	return &GRPCServer{
+		eventHub:        eventHub,
 		resourceService: resourceService,
 		grpcServer:      grpc.NewServer(grpcServerOptions...),
 		bindAddress:     config.BindAddress,
@@ -121,6 +127,45 @@ func (svr *GRPCServer) Publish(ctx context.Context, pubReq *pbv1.PublishRequest)
 	return &emptypb.Empty{}, nil
 }
 
+func (svr *GRPCServer) Subscribe(subReq *pbv1.SubscriptionRequest, subServer pbv1.CloudEventService_SubscribeServer) error {
+	topicSplits := strings.Split(subReq.Topic, "/")
+	if len(topicSplits) != 5 {
+		return fmt.Errorf("invalid subscription topic %s", subReq.Topic)
+	}
+
+	source, clusterName, statusSub := topicSplits[1], topicSplits[3], topicSplits[4]
+	if source == "" || clusterName == "" || statusSub != "status" {
+		// TODO: validate source and clusterName
+		return fmt.Errorf("invalid subscription topic %s", subReq.Topic)
+	}
+
+	eventClient := event.NewEventClient(clusterName)
+	svr.eventHub.Register(eventClient)
+	// unregister the event client when the subscription is closed
+	defer svr.eventHub.Unregister(eventClient)
+
+	// receive events with the event client and send them to the subscriber
+	for res := range eventClient.Receive() {
+		evt, err := encode(res)
+		if err != nil {
+			return fmt.Errorf("failed to encode resource %s to cloudevent: %v", res.ID, err)
+		}
+
+		// pbEvt, err := pb.ToProto(evt)
+		pbEvt := &pbv1.CloudEvent{}
+		if err = grpcprotocol.WritePBMessage(context.TODO(), binding.ToMessage(evt), pbEvt); err != nil {
+			return fmt.Errorf("failed to convert cloudevent to protobuf: %v", err)
+		}
+
+		// send the cloudevent to the subscriber
+		if err := subServer.Send(pbEvt); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 func decode(evt *cloudevents.Event) (*api.Resource, types.EventAction, error) {
 	eventType, err := types.ParseCloudEventsType(evt.Type())
 	if err != nil {
@@ -173,4 +218,58 @@ func decode(evt *cloudevents.Event) (*api.Resource, types.EventAction, error) {
 	}
 
 	return resource, eventType.Action, nil
+}
+
+func encode(resource *api.Resource) (*cloudevents.Event, error) {
+	source := env().Config.MessageBroker.SourceID
+	eventType := types.CloudEventsType{
+		CloudEventsDataType: payload.ManifestEventDataType,
+		SubResource:         types.SubResourceStatus,
+		Action:              config.UpdateRequestAction,
+	}
+
+	evt := types.NewEventBuilder(source, eventType).
+		WithResourceID(resource.ID).
+		WithResourceVersion(int64(resource.Version)).
+		WithClusterName(resource.ConsumerID).
+		NewEvent()
+
+	resourceStatusJSON, err := json.Marshal(resource.Status)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal resource status, %v", err)
+	}
+	resourceStatus := &api.ResourceStatus{}
+	if err := json.Unmarshal(resourceStatusJSON, resourceStatus); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal resource status, %v", err)
+	}
+
+	contentStatusJSON, err := json.Marshal(resourceStatus.ContentStatus)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal content status, %v", err)
+	}
+	contentStatusJSONStr := string(contentStatusJSON)
+
+	statusPayload := &payload.ManifestStatus{
+		Conditions: resourceStatus.ReconcileStatus.Conditions,
+		Status: &workv1.ManifestCondition{
+			Conditions: resourceStatus.ReconcileStatus.Conditions,
+			StatusFeedbacks: workv1.StatusFeedbackResult{
+				Values: []workv1.FeedbackValue{
+					{
+						Name: "status",
+						Value: workv1.FieldValue{
+							Type:    workv1.JsonRaw,
+							JsonRaw: &contentStatusJSONStr,
+						},
+					},
+				},
+			},
+		},
+	}
+
+	if err := evt.SetData(cloudevents.ApplicationJSON, statusPayload); err != nil {
+		return nil, fmt.Errorf("failed to encode manifestwork status to a cloudevent: %v", err)
+	}
+
+	return &evt, nil
 }

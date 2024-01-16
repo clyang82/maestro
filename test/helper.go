@@ -14,7 +14,10 @@ import (
 
 	"github.com/openshift-online/maestro/pkg/controllers"
 	"github.com/openshift-online/maestro/pkg/logger"
+	"open-cluster-management.io/api/cloudevents/generic"
+	grpcoptions "open-cluster-management.io/api/cloudevents/generic/options/grpc"
 	mqttoptions "open-cluster-management.io/api/cloudevents/generic/options/mqtt"
+	"open-cluster-management.io/api/cloudevents/generic/types"
 	"open-cluster-management.io/api/cloudevents/work"
 	"open-cluster-management.io/api/cloudevents/work/agent/codec"
 
@@ -58,6 +61,8 @@ type TimeFunc func() time.Time
 type Helper struct {
 	Ctx context.Context
 
+	Store             *MemoryStore
+	GRPCSourceClient  *generic.CloudEventSourceClient[*api.Resource]
 	DBFactory         db.SessionFactory
 	AppConfig         *config.ApplicationConfig
 	APIServer         server.Server
@@ -212,6 +217,30 @@ func (helper *Helper) StartWorkAgent(ctx context.Context, clusterName string, mq
 
 	go clientHolder.ManifestWorkInformer().Informer().Run(ctx.Done())
 	helper.WorkAgentHolder = clientHolder
+}
+
+func (helper *Helper) StartGRPCResourceSourceClient() {
+	store := NewStore()
+	grpcOptions := grpcoptions.NewGRPCOptions()
+	grpcOptions.URL = helper.Env().Config.GRPCServer.BindAddress
+	sourceClient, err := generic.NewCloudEventSourceClient[*api.Resource](
+		helper.Ctx,
+		grpcoptions.NewSourceOptions(grpcOptions, "integration-grpc-test"),
+		store,
+		resourceStatusHashGetter,
+		&ResourceCodec{},
+	)
+
+	if err != nil {
+		glog.Fatalf("Unable to create grpc cloudevents source client: %s", err.Error())
+	}
+
+	sourceClient.Subscribe(helper.Ctx, func(action types.ResourceAction, resource *api.Resource) error {
+		return store.UpdateStatus(resource)
+	})
+
+	helper.Store = store
+	helper.GRPCSourceClient = sourceClient
 }
 
 func (helper *Helper) RestartServer() {

@@ -123,7 +123,7 @@ func NewAPIServer() Server {
 		Handler: mainHandler,
 	}
 
-	s.grpcServer = NewGRPCServer(env().Services.Resources(), *env().Config.GRPCServer)
+	s.grpcServer = NewGRPCServer(env().Services.Resources(), env().Clients.CloudEventsSource.GetEventHub(), *env().Config.GRPCServer)
 
 	return s
 }

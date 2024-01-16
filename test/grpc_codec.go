@@ -1,14 +1,17 @@
 package test
 
 import (
+	"encoding/json"
 	"fmt"
 
 	cloudevents "github.com/cloudevents/sdk-go/v2"
 	cloudeventstypes "github.com/cloudevents/sdk-go/v2/types"
 	"github.com/openshift-online/maestro/pkg/api"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"open-cluster-management.io/api/cloudevents/generic"
 	"open-cluster-management.io/api/cloudevents/generic/types"
+	agentclient "open-cluster-management.io/api/cloudevents/work/agent/client"
 	"open-cluster-management.io/api/cloudevents/work/payload"
 )
 
@@ -81,8 +84,40 @@ func (c *ResourceCodec) Decode(evt *cloudevents.Event) (*api.Resource, error) {
 		Meta: api.Meta{
 			ID: resourceID,
 		},
-		Version:    int32(resourceVersion),
+		Version:    resourceVersion,
 		ConsumerID: clusterName,
+	}
+
+	resourceStatus := &api.ResourceStatus{
+		ReconcileStatus: &api.ReconcileStatus{
+			ObservedGeneration: resourceVersion,
+		},
+	}
+
+	if manifestStatus.Status != nil {
+		resourceStatus.ReconcileStatus.Conditions = manifestStatus.Status.Conditions
+		if meta.IsStatusConditionTrue(manifestStatus.Conditions, agentclient.ManifestsDeleted) {
+			deletedCondition := meta.FindStatusCondition(manifestStatus.Conditions, agentclient.ManifestsDeleted)
+			resourceStatus.ReconcileStatus.Conditions = append(resourceStatus.ReconcileStatus.Conditions, *deletedCondition)
+		}
+		for _, value := range manifestStatus.Status.StatusFeedbacks.Values {
+			if value.Name == "status" {
+				contentStatus := make(map[string]interface{})
+				if err := json.Unmarshal([]byte(*value.Value.JsonRaw), &contentStatus); err != nil {
+					return nil, fmt.Errorf("failed to convert status feedback value to content status: %v", err)
+				}
+				resourceStatus.ContentStatus = contentStatus
+			}
+		}
+	}
+
+	resourceStatusJSON, err := json.Marshal(resourceStatus)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal resource status: %v", err)
+	}
+	err = json.Unmarshal(resourceStatusJSON, &resource.Status)
+	if err != nil {
+		return nil, fmt.Errorf("failed to unmarshal resource status: %v", err)
 	}
 
 	return resource, nil

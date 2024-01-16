@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/openshift-online/maestro/pkg/api"
+	"github.com/openshift-online/maestro/pkg/event"
 	"github.com/openshift-online/maestro/pkg/logger"
 	"github.com/openshift-online/maestro/pkg/services"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -20,16 +21,22 @@ type SourceClient interface {
 	OnCreate(ctx context.Context, id string) error
 	OnUpdate(ctx context.Context, id string) error
 	OnDelete(ctx context.Context, id string) error
+	GetEventHub() *event.EventHub
 }
 
 type SourceClientImpl struct {
 	Codec                  cegeneric.Codec[*api.Resource]
 	CloudEventSourceClient *cegeneric.CloudEventSourceClient[*api.Resource]
 	ResourceService        services.ResourceService
+	EventHub               *event.EventHub
 }
 
 func NewSourceClient(sourceOptions *ceoptions.CloudEventsSourceOptions, resourceService services.ResourceService) (SourceClient, error) {
 	ctx := context.Background()
+	// start the event hub
+	eventHub := event.NewEventHub()
+	go eventHub.Start(ctx)
+
 	codec := &Codec{}
 	ceSourceClient, err := cegeneric.NewCloudEventSourceClient[*api.Resource](ctx, sourceOptions,
 		resourceService, ResourceStatusHashGetter, codec)
@@ -43,6 +50,9 @@ func NewSourceClient(sourceOptions *ceoptions.CloudEventsSourceOptions, resource
 			logger.Infof("received action %s for resource %s", action, resource.ID)
 			switch action {
 			case cetypes.StatusModified:
+				// broadcast the resource status
+				eventHub.Broadcast(resource)
+
 				resourceStatusJSON, err := json.Marshal(resource.Status)
 				if err != nil {
 					return err
@@ -74,6 +84,7 @@ func NewSourceClient(sourceOptions *ceoptions.CloudEventsSourceOptions, resource
 		Codec:                  codec,
 		CloudEventSourceClient: ceSourceClient,
 		ResourceService:        resourceService,
+		EventHub:               eventHub,
 	}, nil
 }
 
@@ -143,6 +154,10 @@ func (s *SourceClientImpl) OnDelete(ctx context.Context, id string) error {
 	}
 
 	return nil
+}
+
+func (s *SourceClientImpl) GetEventHub() *event.EventHub {
+	return s.EventHub
 }
 
 func ResourceStatusHashGetter(res *api.Resource) (string, error) {

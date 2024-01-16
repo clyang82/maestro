@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/openshift-online/maestro/pkg/api"
+	"github.com/openshift-online/maestro/pkg/event"
 	"github.com/openshift-online/maestro/pkg/services"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -135,5 +136,9 @@ func (s *SourceClientMock) OnDelete(ctx context.Context, id string) error {
 		}
 	}
 
+	return nil
+}
+
+func (s *SourceClientMock) GetEventHub() *event.EventHub {
 	return nil
 }
