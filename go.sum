@@ -78,8 +78,8 @@ github.com/cloudevents/sdk-go/protocol/mqtt_paho/v2 v2.0.0-20241008145627-6bcc07
 github.com/cloudevents/sdk-go/protocol/mqtt_paho/v2 v2.0.0-20241008145627-6bcc075b5b6c/go.mod h1:FwZuQ17vf240KYoiIuz0ffRssLYR36Wvq2KJFYWVn88=
 github.com/cloudevents/sdk-go/v2 v2.16.1 h1:G91iUdqvl88BZ1GYYr9vScTj5zzXSyEuqbfE63gbu9Q=
 github.com/cloudevents/sdk-go/v2 v2.16.1/go.mod h1:v/kVOaWjNfbvc6tkhhlkhvLapj8Aa8kvXiH5GiOHCKI=
-github.com/clyang82/sdk-go v0.0.0-20250912034656-7ffa823ca243 h1:OETBO9bOLGk29cf7DCPCBYHQMi3+rWWNrUmQKhUpvUs=
-github.com/clyang82/sdk-go v0.0.0-20250912034656-7ffa823ca243/go.mod h1:JVQupKu0xVcuVP4IUJF7hjvrXK8plZiwGPZcdqngjXk=
+github.com/clyang82/sdk-go v0.0.0-20250912082708-7b35b3c11c07 h1:8YSbAey9YxUEd9WrXRS1TpThRQldDL9G+KFadfFs9yw=
+github.com/clyang82/sdk-go v0.0.0-20250912082708-7b35b3c11c07/go.mod h1:JVQupKu0xVcuVP4IUJF7hjvrXK8plZiwGPZcdqngjXk=
 github.com/cockroachdb/apd v1.1.0/go.mod h1:8Sl8LxpKi29FqWXR16WEFZRNSz3SoPzUzeMeY4+DwBQ=
 github.com/confluentinc/confluent-kafka-go/v2 v2.3.0 h1:icCHutJouWlQREayFwCc7lxDAhws08td+W3/gdqgZts=
 github.com/confluentinc/confluent-kafka-go/v2 v2.3.0/go.mod h1:/VTy8iEpe6mD9pkCH5BhijlUl8ulUXymKv1Qig5Rgb8=
