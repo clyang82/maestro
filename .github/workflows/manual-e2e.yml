@@ -3,23 +3,6 @@ name: Manual E2E Test
 on:
   # Allow manual triggering with input parameters
   workflow_dispatch:
-    inputs:
-      svc_resource_group:
-        description: 'Service cluster Azure resource group'
-        required: true
-        type: string
-      svc_cluster_name:
-        description: 'Service cluster AKS name'
-        required: true
-        type: string
-      mgmt_resource_group:
-        description: 'Management cluster Azure resource group'
-        required: true
-        type: string
-      mgmt_cluster_name:
-        description: 'Management cluster AKS name'
-        required: true
-        type: string
 
 jobs:
   manual-cluster-e2e:
@@ -27,7 +10,6 @@ jobs:
     permissions:
       id-token: 'write'
       contents: 'read'
-
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
@@ -36,11 +18,19 @@ jobs:
       - name: Azure Login
         uses: azure/login@v2
         with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          # if not using federated identity:
-          # client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+      
+      - name: Checkout aro-hcp
+        uses: actions/checkout@v4
+        with:
+          repository: azure/ARO-HCP
+          ref: main
+          path: hcp
+
+      - name: Install ARO HCP Environment
+        run: |
+          cd /home/runner/work/maestro/maestro/hcp
+          make infra.all deployall
 
       # Install kubelogin (needed for AAD-enabled clusters)
       - name: Install kubelogin
